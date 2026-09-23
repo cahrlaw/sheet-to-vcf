@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sheet to VCF</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    --bg: #f7f7f5;
+    --surface: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b6b6b;
+    --border: #e3e2df;
+    --accent: #b5502e;
+    --accent-hover: #963f22;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17140f;
+      --surface: #211d17;
+      --text: #f2ede4;
+      --muted: #aba496;
+      --border: #3a352c;
+      --accent: #e08a5e;
+      --accent-hover: #f0a179;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17140f;
+    --surface: #211d17;
+    --text: #f2ede4;
+    --muted: #aba496;
+    --border: #3a352c;
+    --accent: #e08a5e;
+    --accent-hover: #f0a179;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100%;
+    padding: 32px 16px 60px;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 6px; }
+  .sub { color: var(--muted); font-size: 0.95rem; margin: 0 0 28px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 12px; }
+  .drop {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 28px 16px;
+    text-align: center;
+    cursor: pointer;
+    color: var(--muted);
+    transition: border-color .15s;
+  }
+  .drop:hover, .drop.drag { border-color: var(--accent); color: var(--text); }
+  .drop input { display: none; }
+  textarea {
+    width: 100%;
+    min-height: 90px;
+    margin-top: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    padding: 10px;
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    resize: vertical;
+  }
+  .or { text-align: center; color: var(--muted); font-size: 0.8rem; margin: 10px 0; }
+  label { display: block; font-size: 0.85rem; color: var(--muted); margin: 12px 0 4px; }
+  select, input[type=text] {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    margin-top: 18px;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .status { font-size: 0.85rem; margin-top: 10px; min-height: 1.2em; color: var(--muted); }
+  .status.ok { color: #4a8a4a; }
+  .status.err { color: #c0392b; }
+  .count { font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Da foglio Google a VCF</h1>
+  <p class="sub">Carica un file CSV esportato da Google Sheet (File → Scarica → Valori separati da virgola) oppure incolla i dati, poi genera il file .vcf da importare in Rubrica.</p>
+
+  <div class="card">
+    <h2>1. Dati dei contatti</h2>
+    <div class="drop" id="drop">
+      <input type="file" id="fileInput" accept=".csv,text/csv">
+      Trascina qui il CSV, oppure tocca per selezionarlo
+    </div>
+    <div class="or">— oppure —</div>
+    <textarea id="pasteArea" placeholder="Incolla qui i dati (ogni riga è un contatto, separata da virgola o tab)"></textarea>
+  </div>
+
+  <div class="card hidden" id="mapCard">
+    <h2>2. Abbina le colonne</h2>
+    <div class="grid">
+      <div>
+        <label for="colName">Nome *</label>
+        <select id="colName"></select>
+      </div>
+      <div>
+        <label for="colSurname">Cognome</label>
+        <select id="colSurname"></select>
+      </div>
+      <div>
+        <label for="colCourse">Corso di studi</label>
+        <select id="colCourse"></select>
+      </div>
+      <div>
+        <label for="colYear">Anno</label>
+        <select id="colYear"></select>
+      </div>
+      <div>
+        <label for="colPhone">Telefono</label>
+        <select id="colPhone"></select>
+      </div>
+      <div>
+        <label for="colPhone2">Telefono 2 (opz.)</label>
+        <select id="colPhone2"></select>
+      </div>
+      <div>
+        <label for="colEmail">Email</label>
+        <select id="colEmail"></select>
+      </div>
+      <div>
+        <label for="colCompany">Azienda</label>
+        <select id="colCompany"></select>
+      </div>
+      <div>
+        <label for="colNote">Note</label>
+        <select id="colNote"></select>
+      </div>
+    </div>
+    <p class="sub" style="margin:10px 0 0;font-size:0.8rem;">Il nome mostrato in rubrica sarà: Nome Cognome Corso Anno (es. "Tommaso Lambertini SPOSI I")</p>
+    <div class="count" id="rowCount"></div>
+    <button id="genBtn">Genera file VCF</button>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<script>
+let rows = [];
+let headers = [];
+let rawText = '';
+let downloadsCap = null;
+
+async function initDownloads() {
+  try {
+    downloadsCap = await claude.use("downloads");
+  } catch (e) { downloadsCap = null; }
+}
+initDownloads();
+
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const pasteArea = document.getElementById('pasteArea');
+const mapCard = document.getElementById('mapCard');
+const status = document.getElementById('status');
+const rowCountEl = document.getElementById('rowCount');
+
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => { rawText = e.target.result; parseCsv(rawText); };
+  reader.readAsText(file, 'UTF-8');
+}
+
+let pasteTimer;
+pasteArea.addEventListener('input', () => {
+  clearTimeout(pasteTimer);
+  pasteTimer = setTimeout(() => {
+    if (pasteArea.value.trim()) { rawText = pasteArea.value; parseCsv(rawText); }
+  }, 400);
+});
+
+function parseCsv(text) {
+  const delimiter = text.split('\n')[0].includes('\t') && !text.split('\n')[0].includes(',') ? '\t' : undefined;
+  const result = Papa.parse(text.trim(), { header: false, skipEmptyLines: true, delimiter });
+  if (!result.data.length) {
+    status.textContent = 'Non sono riuscito a leggere i dati. Controlla il formato.';
+    status.className = 'status err';
+    return;
+  }
+  const rawRows = result.data;
+  const colCount = rawRows[0].length;
+  headers = Array.from({ length: colCount }, (_, i) => `Colonna ${i + 1}`);
+  rows = rawRows.map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = r[i] !== undefined ? r[i] : '');
+    return obj;
+  });
+  if (!rows.length) {
+    status.textContent = 'Nessun contatto trovato nei dati.';
+    status.className = 'status err';
+    return;
+  }
+  populateMapping();
+  mapCard.classList.remove('hidden');
+  status.textContent = '';
+  status.className = 'status';
+  rowCountEl.textContent = rows.length + ' contatti trovati';
+}
+
+function populateMapping() {
+  const fieldIds = ['colName', 'colSurname', 'colCourse', 'colYear', 'colPhone', 'colPhone2', 'colEmail', 'colCompany', 'colNote'];
+  fieldIds.forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">— nessuna —</option>' +
+      headers.map(h => `<option value="${escapeHtml(h)}">${escapeHtml(h)}</option>`).join('');
+  });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function vcfEscape(s) {
+  return String(s || '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+}
+
+function buildVcf() {
+  const nameCol = document.getElementById('colName').value;
+  const surnameCol = document.getElementById('colSurname').value;
+  const courseCol = document.getElementById('colCourse').value;
+  const yearCol = document.getElementById('colYear').value;
+  const phoneCol = document.getElementById('colPhone').value;
+  const phone2Col = document.getElementById('colPhone2').value;
+  const emailCol = document.getElementById('colEmail').value;
+  const companyCol = document.getElementById('colCompany').value;
+  const noteCol = document.getElementById('colNote').value;
+
+  if (!nameCol) {
+    status.textContent = 'Seleziona almeno la colonna del nome.';
+    status.className = 'status err';
+    return null;
+  }
+
+  let vcf = '';
+  let count = 0;
+  rows.forEach(row => {
+    const first = (row[nameCol] || '').trim();
+    const last = surnameCol ? (row[surnameCol] || '').trim() : '';
+    const course = courseCol ? (row[courseCol] || '').trim() : '';
+    const year = yearCol ? (row[yearCol] || '').trim() : '';
+    if (!first) return;
+    count++;
+    const fullName = [first, last, course, year].filter(Boolean).join(' ');
+    const familyPart = [last, course, year].filter(Boolean).join(' ');
+    vcf += 'BEGIN:VCARD\r\n';
+    vcf += 'VERSION:3.0\r\n';
+    vcf += `N:${vcfEscape(familyPart)};${vcfEscape(first)};;;\r\n`;
+    vcf += `FN:${vcfEscape(fullName)}\r\n`;
+    if (phoneCol && row[phoneCol]) vcf += `TEL;TYPE=CELL:${vcfEscape(row[phoneCol])}\r\n`;
+    if (phone2Col && row[phone2Col]) vcf += `TEL;TYPE=HOME:${vcfEscape(row[phone2Col])}\r\n`;
+    if (emailCol && row[emailCol]) vcf += `EMAIL:${vcfEscape(row[emailCol])}\r\n`;
+    if (companyCol && row[companyCol]) vcf += `ORG:${vcfEscape(row[companyCol])}\r\n`;
+    if (noteCol && row[noteCol]) vcf += `NOTE:${vcfEscape(row[noteCol])}\r\n`;
+    vcf += 'END:VCARD\r\n';
+  });
+
+  if (!count) {
+    status.textContent = 'Nessun contatto valido trovato (manca il nome).';
+    status.className = 'status err';
+    return null;
+  }
+
+  return { vcf, count };
+}
+
+document.getElementById('genBtn').addEventListener('click', async () => {
+  const result = buildVcf();
+  if (!result) return;
+  status.textContent = 'Preparazione del file...';
+  status.className = 'status';
+
+  if (downloadsCap) {
+    try {
+      const bytes = new TextEncoder().encode(result.vcf);
+      const blob = new Blob([bytes], { type: 'text/vcard' });
+      await downloadsCap.save({ filename: 'contatti.vcf', data: blob });
+      status.textContent = `File pronto: ${result.count} contatti salvati in contatti.vcf`;
+      status.className = 'status ok';
+      return;
+    } catch (e) {
+      // fall through to fallback
+    }
+  }
+
+  // Fallback: blob download link (works if downloads capability unavailable)
+  const blob = new Blob([new TextEncoder().encode(result.vcf)], { type: 'text/vcard' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'contatti.vcf';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  status.textContent = `File pronto: ${result.count} contatti (${result.count} vCard) generati.`;
+  status.className = 'status ok';
+});
+</script>
+</body>
+</html>
